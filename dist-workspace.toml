@@ -1,0 +1,12 @@
+[workspace]
+members = ["cargo:."]
+
+# Config for dist (https://github.com/axodotdev/cargo-dist)
+[dist]
+cargo-dist-version = "0.32.0"
+ci = "github"
+installers = []
+targets = ["aarch64-apple-darwin", "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]
+unix-archive = ".tar.gz"
+checksum = "sha256"
+github-attestations = true

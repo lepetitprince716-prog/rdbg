@@ -5,7 +5,12 @@ resolver = "3"
 [workspace.package]
 edition = "2024"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/lepetitprince716-prog/rdbg"
 
 [profile.release]
 strip = true
 lto = "thin"
+
+# The profile that dist builds release archives with
+[profile.dist]
+inherits = "release"

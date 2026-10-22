@@ -25,9 +25,9 @@ pub const SHAWL_VERSION: &str = "v1.9.0";
 /// SHA-256 of `shawl-v1.9.0-win64.zip` as published with the release.
 pub const SHAWL_WIN64_ZIP_SHA256: &str =
     "f883c5d09c9beae2efaeabd8513e7d3f57cd1d0864cec3df4f4a7b6ee904351c";
-// Placeholder: must be replaced with the hash of shawl.exe from the pinned zip before release.
+/// SHA-256 of the `shawl.exe` inside that zip.
 pub const SHAWL_EXE_SHA256: &str =
-    "0000000000000000000000000000000000000000000000000000000000000000";
+    "0985555b71e7f943b8f3fc639952a9890aa62e66617942a2d0996985fe8e7c6d";
 
 pub(crate) const SCRIPT_BODY: &str = include_str!("../remote/comfy-service.ps1");
 
@@ -704,7 +704,10 @@ mod tests {
         for forbidden in ["Stop-Process", "taskkill", "Start-Process", "-Verb RunAs"] {
             assert!(!SCRIPT_BODY.contains(forbidden), "{forbidden}");
         }
-        assert_eq!(SHAWL_EXE_SHA256.len(), 64);
-        assert_eq!(SHAWL_WIN64_ZIP_SHA256.len(), 64);
+        for pin in [SHAWL_EXE_SHA256, SHAWL_WIN64_ZIP_SHA256] {
+            assert_eq!(pin.len(), 64);
+            assert!(pin.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')));
+            assert!(pin.bytes().any(|b| b != b'0'), "pin is a placeholder");
+        }
     }
 }

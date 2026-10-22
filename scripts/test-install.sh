@@ -115,7 +115,7 @@ check "success: mode is exactly 0755" mode_is_0755 "$tmp/t1/bin/rdbg"
 check "success: installed binary answers --version" \
   test "$("$tmp/t1/bin/rdbg" --version)" = "rdbg 0.0.0-test"
 check "success: reports the checksum check" grep -q "SHA-256 verified" "$tmp/out"
-check "success: says attestation was not checked without gh" \
+check "success: says the attestation was not checked" \
   grep -q "attestation was not checked" "$tmp/out"
 check "success: only rdbg is in the target dir" test "$(ls -A "$tmp/t1/bin")" = "rdbg"
 check "success: no temp files left" no_leftovers
@@ -154,7 +154,7 @@ run_install "$tmp/box-sum" --from "$tmp/release-nosum" --to "$tmp/t4/bin"
 check "unlisted archive: exit nonzero" test "$rc" -ne 0
 check "unlisted archive: nothing installed" test ! -e "$tmp/t4"
 
-# --- 5. gh present: attestation is checked and must pass --------------------
+# --- 5. attestation: only with --verify-attestation, and then it must pass ---
 
 mkgh() { # DIR EXIT-CODE LOG
   mkdir -p "$1"
@@ -167,20 +167,32 @@ EOF
 }
 
 mkgh "$tmp/gh-ok" 0 "$tmp/gh-ok.log"
-run_install "$tmp/gh-ok:$tmp/box-sum" --from "$rel" --to "$tmp/t5/bin"
-check "gh ok: exit 0" test "$rc" -eq 0
-check "gh ok: rdbg installed" test -x "$tmp/t5/bin/rdbg"
-check "gh ok: verify was called once on the archive for this repo" \
+run_install "$tmp/gh-ok:$tmp/box-sum" --from "$rel" --to "$tmp/t5a/bin"
+check "gh installed, no flag: exit 0" test "$rc" -eq 0
+check "gh installed, no flag: gh is never called" test ! -e "$tmp/gh-ok.log"
+check "gh installed, no flag: says the attestation was not checked" \
+  grep -q "attestation was not checked" "$tmp/out"
+
+run_install "$tmp/gh-ok:$tmp/box-sum" --from "$rel" --to "$tmp/t5/bin" --verify-attestation
+check "flag, gh ok: exit 0" test "$rc" -eq 0
+check "flag, gh ok: rdbg installed" test -x "$tmp/t5/bin/rdbg"
+check "flag, gh ok: verify was called once on the archive for this repo" \
   test "$(grep -c -E "^attestation verify .*/rdbg-[a-z0-9_-]+\.tar\.gz --repo $repo_slug\$" "$tmp/gh-ok.log")" = 1
-check "gh ok: does not claim the attestation was skipped" \
+check "flag, gh ok: does not claim the attestation was skipped" \
   test "$(grep -c "attestation was not checked" "$tmp/out")" = 0
 
 mkgh "$tmp/gh-bad" 1 "$tmp/gh-bad.log"
-run_install "$tmp/gh-bad:$tmp/box-sum" --from "$rel" --to "$tmp/t6/bin"
-check "gh fails: exit nonzero" test "$rc" -ne 0
-check "gh fails: says the attestation check failed" grep -q "attestation check failed" "$tmp/out"
-check "gh fails: nothing installed" test ! -e "$tmp/t6"
-check "gh fails: no temp files left" no_leftovers
+run_install "$tmp/gh-bad:$tmp/box-sum" --from "$rel" --to "$tmp/t6/bin" --verify-attestation
+check "flag, gh fails: exit nonzero" test "$rc" -ne 0
+check "flag, gh fails: says the attestation check failed" grep -q "attestation check failed" "$tmp/out"
+check "flag, gh fails: nothing installed" test ! -e "$tmp/t6"
+check "flag, gh fails: no temp files left" no_leftovers
+
+run_install "$tmp/box-sum" --from "$rel" --to "$tmp/t6b/bin" --verify-attestation
+check "flag, no gh: exit nonzero" test "$rc" -ne 0
+check "flag, no gh: says gh is needed" grep -q "needs the GitHub CLI" "$tmp/out"
+check "flag, no gh: nothing installed" test ! -e "$tmp/t6b"
+check "flag, no gh: no temp files left" no_leftovers
 
 # --- 6. download path through a stub curl -----------------------------------
 

@@ -1,13 +1,13 @@
 #!/bin/sh
 # Install a prebuilt rdbg release.
 #
-#   install.sh [--version vX.Y.Z] [--to DIR] [--from DIR]
+#   install.sh [--version vX.Y.Z] [--to DIR] [--from DIR] [--verify-attestation]
 #
 # Gets rdbg-<target>.tar.gz and sha256.sum from the GitHub release, checks the
 # SHA-256 (it fails when the machine has no checksum tool), checks the build
-# attestation when the GitHub CLI is installed, then installs rdbg with mode
-# 0755 and runs `rdbg --version`. Nothing is installed unless every check
-# passes.
+# attestation with the GitHub CLI when --verify-attestation is given, then
+# installs rdbg with mode 0755 and runs `rdbg --version`. Nothing is installed
+# unless every check passes.
 
 set -eu
 
@@ -34,7 +34,7 @@ cleanup() {
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--version vX.Y.Z] [--to DIR] [--from DIR]
+Usage: install.sh [--version vX.Y.Z] [--to DIR] [--from DIR] [--verify-attestation]
 
 Install the prebuilt rdbg binary for this machine.
 
@@ -42,6 +42,9 @@ Install the prebuilt rdbg binary for this machine.
   --to DIR          install directory (default: $HOME/.local/bin)
   --from DIR        offline mode: use the archive and sha256.sum found in DIR
                     instead of downloading them
+  --verify-attestation
+                    also check the GitHub build attestation; needs gh,
+                    logged in, with network access to GitHub
   -h, --help        show this help
 
 Prebuilt for macOS on Apple silicon and for Linux on x86_64 and aarch64.
@@ -82,6 +85,7 @@ main() {
   version=""
   dest=""
   from=""
+  attest=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --version | --to | --from)
@@ -92,6 +96,10 @@ main() {
           --from) from=$2 ;;
         esac
         shift 2
+        ;;
+      --verify-attestation)
+        attest=1
+        shift
         ;;
       -h | --help)
         usage
@@ -125,6 +133,9 @@ main() {
   have gzip || die "gzip not found"
   if ! have shasum && ! have sha256sum; then
     die "no SHA-256 tool found (need shasum or sha256sum); refusing to install an unverified binary"
+  fi
+  if [ "$attest" = 1 ] && ! have gh; then
+    die "--verify-attestation needs the GitHub CLI (gh); nothing was installed"
   fi
   if [ -z "$from" ] && ! have curl && ! have wget; then
     die "need curl or wget to download (or use --from DIR)"
@@ -169,12 +180,12 @@ main() {
   fi
   say "SHA-256 verified"
 
-  if have gh; then
+  if [ "$attest" = 1 ]; then
     say "Checking build attestation with gh"
     gh attestation verify "$work/$archive" --repo "$REPO" </dev/null ||
       die "attestation check failed (gh needs network access and a login, see: gh auth status); nothing was installed"
   else
-    warn "Note: gh not found, so the build attestation was not checked."
+    warn "Note: the build attestation was not checked; pass --verify-attestation to check it with gh."
   fi
 
   unpacked="$work/unpacked"

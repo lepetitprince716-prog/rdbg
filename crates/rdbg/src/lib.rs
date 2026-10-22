@@ -14,14 +14,19 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde_json::{Value, json};
 
+mod comfy;
+mod comfy_contracts;
 mod contracts;
 mod doctor;
+mod envelope;
 mod hosts;
 
+pub use comfy::{SHAWL_EXE_SHA256, SHAWL_VERSION, SHAWL_WIN64_ZIP_SHA256};
 pub use doctor::{
     EXIT_BUSY, EXIT_CONFIG, EXIT_LOCAL_IO, EXIT_PROBE_PROTOCOL, EXIT_RESULT_PROTOCOL,
     EXIT_UNKNOWN_PROBE, EXIT_UNKNOWN_TARGET, MAX_OUTPUT_CHARS,
 };
+pub use envelope::{EXIT_ACTION_FAILED, EXIT_REFUSED};
 
 pub const EXIT_OK: i32 = 0;
 pub const EXIT_USAGE: i32 = 2;
@@ -65,6 +70,7 @@ Usage:
   rdbg [--json] [--ssh SSH] [--no-ssh-opts] [--timeout SECONDS] ps TARGET --file PATH
   rdbg [--json] [--ssh SSH] [--no-ssh-opts] [--timeout SECONDS] ps TARGET --file -
   rdbg doctor --help
+  rdbg comfy --help
 
 Options:
   --json             Emit one JSON result object instead of human-oriented output.
@@ -220,6 +226,9 @@ pub fn main_entry() -> i32 {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     if args.first().is_some_and(|arg| arg == "doctor") {
         return doctor::main(&args[1..]);
+    }
+    if args.first().is_some_and(|arg| arg == "comfy") {
+        return comfy::main(&args[1..]);
     }
     let wants_json = args.iter().any(|arg| arg == "--json");
 

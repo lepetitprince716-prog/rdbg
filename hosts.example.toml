@@ -1,4 +1,4 @@
-# Example rdbg doctor configuration. Copy it to ~/.config/rdbg/hosts.toml (or point
+# Example rdbg doctor and rdbg comfy configuration. Copy it to ~/.config/rdbg/hosts.toml (or point
 # --config or $RDBG_CONFIG at it) and replace the placeholder aliases.
 # Addresses, users and keys stay in your ssh_config; `ssh` only names an alias there.
 
@@ -7,11 +7,14 @@ ssh = "box-a"              # ssh_config alias (required)
 # ssh_bin = "ssh"          # ssh executable or wrapper (default "ssh")
 # no_ssh_opts = false      # true when ssh_bin is a wrapper that sets its own -o options
 
-[hosts.box-a.comfy]        # optional; read by the comfyui, listener and network probes
+[hosts.box-a.comfy]        # optional; read by the doctor probes and rdbg comfy
 port = 8188                # default 8188
 expected_service = "ComfyUI"                      # Windows service that should own the port
 expected_version = "0.0.0"                        # ComfyUI version the comfyui probe expects
 python = 'C:\ComfyUI\.venv\Scripts\python.exe'    # interpreter expected in the listener lineage
+# root = 'C:\ComfyUI'                             # directory holding main.py (rdbg comfy install-service)
+# listen = "127.0.0.1"                            # ComfyUI --listen address (default "127.0.0.1")
+# args = ["--lowvram"]                            # extra ComfyUI arguments for the service
 
 [hosts.box-b]
 ssh = "box-b"

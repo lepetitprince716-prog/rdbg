@@ -6,7 +6,8 @@ shell quoting, `cmd.exe` and the Windows command-line length limit cannot change
 
 Status: early. The controller runs on macOS or Linux; the remote host is Windows with OpenSSH
 Server. Diagnostics (`rdbg doctor`) and an optional ComfyUI service module (`rdbg comfy`) are
-available.
+available. `rdbg comfy` has not yet been run against a real Windows host; see
+[ComfyUI service](#comfyui-service-optional).
 
 ## Usage
 
@@ -111,6 +112,11 @@ A failed run keeps the error class and exit code (20-25) of the underlying `rdbg
 `rdbg comfy` manages a ComfyUI that is already installed on the host. It never installs ComfyUI
 itself; for that, use `comfy install` from [comfy-cli](https://github.com/Comfy-Org/comfy-cli).
 comfy-cli is GPL-licensed: rdbg links to it and does not include or copy any of its code.
+
+Not yet verified on a real host: none of the `rdbg comfy` actions (`status`, `restart`,
+`install-service`, `uninstall-service`) has been run against a real Windows machine. They are
+tested only under PowerShell 7 with mocked cmdlets (`crates/rdbg/tests/comfy_pwsh.rs`) and with a
+fake `ssh`. Try `install-service` on a test instance before relying on it.
 
 ```text
 rdbg comfy [--config PATH] ALIAS status

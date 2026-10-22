@@ -12,7 +12,16 @@ use std::os::unix::process::CommandExt as _;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use serde_json::json;
+use serde_json::{Value, json};
+
+mod contracts;
+mod doctor;
+mod hosts;
+
+pub use doctor::{
+    EXIT_BUSY, EXIT_CONFIG, EXIT_LOCAL_IO, EXIT_PROBE_PROTOCOL, EXIT_RESULT_PROTOCOL,
+    EXIT_UNKNOWN_PROBE, EXIT_UNKNOWN_TARGET, MAX_OUTPUT_CHARS,
+};
 
 pub const EXIT_OK: i32 = 0;
 pub const EXIT_USAGE: i32 = 2;
@@ -55,6 +64,7 @@ Usage:
   rdbg [--json] [--ssh SSH] [--no-ssh-opts] [--timeout SECONDS] ps TARGET --eval SCRIPT
   rdbg [--json] [--ssh SSH] [--no-ssh-opts] [--timeout SECONDS] ps TARGET --file PATH
   rdbg [--json] [--ssh SSH] [--no-ssh-opts] [--timeout SECONDS] ps TARGET --file -
+  rdbg doctor --help
 
 Options:
   --json             Emit one JSON result object instead of human-oriented output.
@@ -70,17 +80,17 @@ TARGET may be a host, user@host, or an alias from ssh_config.
 "#;
 
 #[derive(Debug)]
-struct Config {
-    json: bool,
-    ssh: OsString,
-    no_ssh_opts: bool,
-    timeout_seconds: Option<u64>,
-    target: String,
-    source: ScriptSource,
+pub(crate) struct Config {
+    pub(crate) json: bool,
+    pub(crate) ssh: OsString,
+    pub(crate) no_ssh_opts: bool,
+    pub(crate) timeout_seconds: Option<u64>,
+    pub(crate) target: String,
+    pub(crate) source: ScriptSource,
 }
 
 #[derive(Debug)]
-enum ScriptSource {
+pub(crate) enum ScriptSource {
     Eval(String),
     File(PathBuf),
     Stdin,
@@ -103,7 +113,7 @@ enum ParseResult {
 }
 
 #[derive(Debug)]
-struct Failure {
+pub(crate) struct Failure {
     class: &'static str,
     rdbg_exit_code: i32,
     message: String,
@@ -113,7 +123,7 @@ struct Failure {
 }
 
 #[derive(Debug)]
-struct ProcessResult {
+pub(crate) struct ProcessResult {
     target: String,
     mode: &'static str,
     timeout_seconds: Option<u64>,
@@ -208,6 +218,9 @@ impl Failure {
 
 pub fn main_entry() -> i32 {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "doctor") {
+        return doctor::main(&args[1..]);
+    }
     let wants_json = args.iter().any(|arg| arg == "--json");
 
     let config = match parse_args(&args) {
@@ -451,7 +464,7 @@ fn utf16le_base64(text: &str) -> String {
     BASE64.encode(bytes)
 }
 
-fn execute(config: &Config, script: &str) -> Result<ProcessResult, Failure> {
+pub(crate) fn execute(config: &Config, script: &str) -> Result<ProcessResult, Failure> {
     let bootstrap = utf16le_base64(POWERSHELL_BOOTSTRAP);
     let payload = utf16le_base64(script).into_bytes();
 
@@ -882,38 +895,67 @@ fn terminate_and_reap(
     (status, error)
 }
 
-fn render_process_result(result: &ProcessResult, as_json: bool) -> i32 {
+/// The `rdbg.result.v1` document for a completed process, and its exit code.
+pub(crate) fn process_result_document(result: &ProcessResult) -> (Value, i32) {
     let (class, rdbg_exit_code, message) = classify_process_result(result);
     let ok = rdbg_exit_code == EXIT_OK;
+    let (stdout, stdout_lossy) = utf8_output(&result.stdout);
+    let (stderr, stderr_lossy) = utf8_output(&result.stderr);
+    let document = json!({
+        "schema": "rdbg.result.v1",
+        "ok": ok,
+        "error_class": class,
+        "rdbg_exit_code": rdbg_exit_code,
+        "process_exit_code": result.process_exit_code,
+        "target": result.target,
+        "mode": result.mode,
+        "timeout_seconds": result.timeout_seconds,
+        "stdout": stdout,
+        "stderr": stderr,
+        "stdout_utf8_lossy": stdout_lossy,
+        "stderr_utf8_lossy": stderr_lossy,
+        "stdout_truncated": result.stdout_truncated,
+        "stderr_truncated": result.stderr_truncated,
+        "message": message,
+    });
+    (document, rdbg_exit_code)
+}
+
+/// The `rdbg.result.v1` document for a failure that produced no process result.
+pub(crate) fn failure_document(failure: &Failure) -> (Value, i32) {
+    let document = json!({
+        "schema": "rdbg.result.v1",
+        "ok": false,
+        "error_class": failure.class,
+        "rdbg_exit_code": failure.rdbg_exit_code,
+        "process_exit_code": null,
+        "target": failure.target,
+        "mode": failure.mode,
+        "timeout_seconds": failure.timeout_seconds,
+        "stdout": "",
+        "stderr": "",
+        "stdout_utf8_lossy": false,
+        "stderr_utf8_lossy": false,
+        "stdout_truncated": false,
+        "stderr_truncated": false,
+        "message": failure.message,
+    });
+    (document, failure.rdbg_exit_code)
+}
+
+fn render_process_result(result: &ProcessResult, as_json: bool) -> i32 {
+    let (document, rdbg_exit_code) = process_result_document(result);
 
     if as_json {
-        let (stdout, stdout_lossy) = utf8_output(&result.stdout);
-        let (stderr, stderr_lossy) = utf8_output(&result.stderr);
-        let document = json!({
-            "schema": "rdbg.result.v1",
-            "ok": ok,
-            "error_class": class,
-            "rdbg_exit_code": rdbg_exit_code,
-            "process_exit_code": result.process_exit_code,
-            "target": result.target,
-            "mode": result.mode,
-            "timeout_seconds": result.timeout_seconds,
-            "stdout": stdout,
-            "stderr": stderr,
-            "stdout_utf8_lossy": stdout_lossy,
-            "stderr_utf8_lossy": stderr_lossy,
-            "stdout_truncated": result.stdout_truncated,
-            "stderr_truncated": result.stderr_truncated,
-            "message": message,
-        });
         let mut stdout_handle = io::stdout().lock();
         let _ = serde_json::to_writer(&mut stdout_handle, &document);
         let _ = stdout_handle.write_all(b"\n");
     } else {
         let _ = io::stdout().write_all(&result.stdout);
         let _ = io::stderr().write_all(&result.stderr);
-        if let Some(message) = message {
-            write_human_diagnostic(class.unwrap_or("ssh_io"), &message, &result.stderr);
+        if let Some(message) = document["message"].as_str() {
+            let class = document["error_class"].as_str().unwrap_or("ssh_io");
+            write_human_diagnostic(class, message, &result.stderr);
         }
         if result.stdout_truncated || result.stderr_truncated {
             let streams = match (result.stdout_truncated, result.stderr_truncated) {
@@ -1050,23 +1092,7 @@ fn with_io_errors(mut message: String, result: &ProcessResult) -> String {
 
 fn render_failure(failure: &Failure, as_json: bool) {
     if as_json {
-        let document = json!({
-            "schema": "rdbg.result.v1",
-            "ok": false,
-            "error_class": failure.class,
-            "rdbg_exit_code": failure.rdbg_exit_code,
-            "process_exit_code": null,
-            "target": failure.target,
-            "mode": failure.mode,
-            "timeout_seconds": failure.timeout_seconds,
-            "stdout": "",
-            "stderr": "",
-            "stdout_utf8_lossy": false,
-            "stderr_utf8_lossy": false,
-            "stdout_truncated": false,
-            "stderr_truncated": false,
-            "message": failure.message,
-        });
+        let (document, _) = failure_document(failure);
         let mut stdout_handle = io::stdout().lock();
         let _ = serde_json::to_writer(&mut stdout_handle, &document);
         let _ = stdout_handle.write_all(b"\n");

@@ -85,6 +85,8 @@ $global:Fake = @{
     Hash = ([string]$ShawlSha256).ToUpperInvariant()
     HashThrows = $false
     Listeners = @()
+    # Rows on a port in a state other than Listen: State, Port, Pid, RemotePort.
+    OtherRows = @()
     Processes = @{}
     Services = @(
         @{ Name = 'sshd'; State = 'Running'; ProcessId = 5; StartMode = 'Auto'; PathName = 'C:\Windows\System32\OpenSSH\sshd.exe' }
@@ -159,9 +161,14 @@ function Get-NetTCPConnection {
     if ($global:Fake.ListenerQueryThrows) {
         throw 'listener query failed'
     }
-    return @($global:Fake.Listeners | ForEach-Object {
-        [pscustomobject]@{ State = 'Listen'; LocalPort = $_.Port; OwningProcess = $_.Pid }
-    })
+    return @(
+        @($global:Fake.Listeners | ForEach-Object {
+            [pscustomobject]@{ State = 'Listen'; LocalPort = $_.Port; RemotePort = 0; OwningProcess = $_.Pid }
+        }) +
+        @($global:Fake.OtherRows | ForEach-Object {
+            [pscustomobject]@{ State = $_.State; LocalPort = $_.Port; RemotePort = $_.RemotePort; OwningProcess = $_.Pid }
+        })
+    )
 }
 
 function Invoke-RestMethod {
@@ -424,6 +431,7 @@ install_refusal! {
     install_refuses_an_unreadable_shawl_hash: "$global:Fake.HashThrows = $true" => "shawl_hash_unreadable";
     install_refuses_a_busy_port: "$global:Fake.Listeners = @(@{ Port = 8188; Pid = 300 })" => "port_in_use";
     install_refuses_an_unreadable_listener_table: "$global:Fake.ListenerQueryThrows = $true" => "listener_query_failed";
+    install_refuses_an_inconsistent_listener_table: "$global:Fake.OtherRows = @(@{ State = 'FinWait1'; Port = 8188; Pid = 300; RemotePort = 0 })" => "listener_query_failed";
     install_refuses_an_existing_service: "$global:Fake.Services += @{ Name = 'Svc'; State = 'Stopped'; ProcessId = 0; StartMode = 'Manual'; PathName = 'C:\\x.exe' }" => "service_exists";
     install_refuses_when_launchers_cannot_be_scanned: "$global:Fake.TaskQueryThrows = $true" => "launcher_scan_failed";
     install_refuses_a_conflicting_service_launcher: "$global:Fake.Services += @{ Name = 'OldComfy'; State = 'Stopped'; ProcessId = 0; StartMode = 'Manual'; PathName = '\"C:\\py\\python.exe\" C:\\ComfyUI\\main.py --port 8188' }" => "launcher_conflict";
@@ -781,6 +789,44 @@ fn status_with_a_service_name_reports_ownership() {
     assert_eq!(observation["live"]["version"], "1.0.0");
     assert_eq!(observation["live"]["version_matches"], true);
     assert!(run.calls.is_empty());
+}
+
+#[test]
+fn status_reports_a_server_socket_without_listen_state_as_a_query_failure() {
+    let setup = format!(
+        "$global:Fake.AllowMutation = $false\n{RUNNING_SERVICE}\n\
+         $global:Fake.Listeners = @()\n\
+         $global:Fake.OtherRows = @(\
+         @{{ State = 'FinWait1'; Port = 8188; Pid = 100; RemotePort = 0 }}, \
+         @{{ State = ''; Port = 8188; Pid = 100; RemotePort = 0 }}, \
+         @{{ State = 'Established'; Port = 8188; Pid = 100; RemotePort = 50000 }})"
+    );
+    let Some(run) = run(FULL_COMFY, &["status"], &setup) else {
+        return;
+    };
+    let observation = &run.observation;
+    assert_eq!(
+        observation["listener"],
+        json!({"port": 8188, "listening": false, "owner_pids": [],
+               "all_owners_service_bound": null,
+               "error": "TCP table inconsistent: no Listen row on the port, but 2 row(s) \
+                         without a remote endpoint (state FinWait1,unnamed)"})
+    );
+    assert_eq!(reasons(observation), ["listener_query_failed"]);
+    assert!(run.calls.is_empty());
+}
+
+#[test]
+fn status_ignores_connected_rows_when_nothing_listens() {
+    let setup = "$global:Fake.AllowMutation = $false\n\
+                 $global:Fake.OtherRows = @(\
+                 @{ State = 'TimeWait'; Port = 8188; Pid = 0; RemotePort = 50000 })";
+    let Some(run) = run(FULL_COMFY, &["status"], setup) else {
+        return;
+    };
+    assert_eq!(run.observation["listener"]["listening"], false);
+    assert_eq!(run.observation["listener"]["error"], Value::Null);
+    assert!(reasons(&run.observation).contains(&"port_not_listening".to_owned()));
 }
 
 #[test]

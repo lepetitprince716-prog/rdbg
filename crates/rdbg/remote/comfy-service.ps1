@@ -169,12 +169,28 @@ function Get-ListenerState {
     $allBound = $null
     $listenerError = $null
     try {
-        $listeners = @(
-            Get-NetTCPConnection -State Listen -ErrorAction Stop |
-                Where-Object {
-                    [string]$_.State -eq 'Listen' -and [int]$_.LocalPort -eq [int]$ComfyPort
-                }
+        $portRows = @(
+            Get-NetTCPConnection -ErrorAction Stop |
+                Where-Object { [int]$_.LocalPort -eq [int]$ComfyPort }
         )
+        $listeners = @($portRows | Where-Object { [string]$_.State -eq 'Listen' })
+        if ($listeners.Count -eq 0) {
+            # Some hosts report a bound server socket with a non-Listen state. Rows
+            # on the port without a remote endpoint then make a free port unprovable;
+            # treat that like an unreadable table.
+            $noRemote = @($portRows | Where-Object { [int](Get-Prop $_ 'RemotePort') -eq 0 })
+            if ($noRemote.Count -gt 0) {
+                $stateNames = @(
+                    $noRemote | ForEach-Object {
+                        $name = [string]$_.State
+                        if ([string]::IsNullOrEmpty($name)) { 'unnamed' } else { $name }
+                    } | Sort-Object -Unique
+                )
+                throw ('TCP table inconsistent: no Listen row on the port, but ' +
+                    [string]$noRemote.Count + ' row(s) without a remote endpoint (state ' +
+                    ($stateNames -join ',') + ')')
+            }
+        }
         $ownerPids = @($listeners | ForEach-Object { [int]$_.OwningProcess } | Sort-Object -Unique)
         if ($null -ne $ExpectedService) {
             $allBound = ($ownerPids.Count -gt 0)

@@ -199,6 +199,42 @@ fn listener_empty_port_stays_missing_when_required_service_is_stopped() {
 }
 
 #[test]
+fn listener_reports_inconsistent_table_when_port_has_unconnected_non_listen_rows() {
+    let Some(observation) = run_probe(
+        "listener",
+        LISTENER_COMFY,
+        r#"
+function Get-NetTCPConnection {
+    @(
+        [pscustomobject]@{ State = 'FinWait1'; LocalPort = 8188; RemotePort = 0; OwningProcess = 100 },
+        [pscustomobject]@{ State = ''; LocalPort = 8188; RemotePort = 0; OwningProcess = 100 },
+        [pscustomobject]@{ State = 'Established'; LocalPort = 8188; RemotePort = 50000; OwningProcess = 100 },
+        [pscustomobject]@{ State = 'Listen'; LocalPort = 22; RemotePort = 0; OwningProcess = 300 }
+    )
+}
+function Get-CimInstance {
+    param($ClassName, $Filter)
+    if ($ClassName -eq 'Win32_Service') {
+        return [pscustomobject]@{ Name = 'Svc'; State = 'Running'; ProcessId = 10 }
+    }
+    return $null
+}
+"#,
+    ) else {
+        return;
+    };
+    assert_eq!(observation["listening"], false);
+    assert_eq!(observation["verdict"], "missing");
+    assert_eq!(observation["healthy"], false);
+    assert_eq!(observation["processes"], json!([]));
+    assert_eq!(
+        observation["collection_error"],
+        "TCP table inconsistent: no Listen row on the port, but 2 row(s) without a remote \
+         endpoint (state FinWait1,unnamed)"
+    );
+}
+
+#[test]
 fn overview_reports_stopped_expected_service_as_unhealthy() {
     let Some(observation) = run_probe(
         "overview",
@@ -516,8 +552,11 @@ fn every_composed_probe_parses() {
 #[test]
 fn listener_uses_local_filter_and_requires_every_owner_to_match() {
     let script = probe_text("listener");
-    assert!(script.contains("Get-NetTCPConnection -State Listen -ErrorAction Stop"));
+    assert!(script.contains("Get-NetTCPConnection -ErrorAction Stop"));
+    assert!(!script.contains("Get-NetTCPConnection -State"));
     assert!(script.contains("LocalPort") && script.contains("Where-Object"));
+    assert!(script.contains("[string]$_.State -eq 'Listen'"));
+    assert!(script.contains("TCP table inconsistent"));
     assert!(!script.contains("No MSFT_NetTCPConnection objects found"));
     assert!(!script.contains(".Exception.Message.Contains("));
     for needle in [

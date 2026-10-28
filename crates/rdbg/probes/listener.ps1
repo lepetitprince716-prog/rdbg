@@ -59,12 +59,28 @@ $ownerLineages = @()
 try {
     # Enumerate the stable result set first, then filter locally. A port with no
     # owner is therefore an empty array, independent of localized CIM messages.
-    $listeners = @(
-        Get-NetTCPConnection -State Listen -ErrorAction Stop |
-            Where-Object {
-                [string]$_.State -eq 'Listen' -and [int]$_.LocalPort -eq [int]$ComfyPort
-            }
+    $portRows = @(
+        Get-NetTCPConnection -ErrorAction Stop |
+            Where-Object { [int]$_.LocalPort -eq [int]$ComfyPort }
     )
+    $listeners = @($portRows | Where-Object { [string]$_.State -eq 'Listen' })
+    if ($listeners.Count -eq 0) {
+        # Some hosts report a bound server socket with a non-Listen state. Rows on
+        # the port without a remote endpoint then make 'missing' unprovable, so
+        # surface them instead of returning a silent missing verdict.
+        $noRemote = @($portRows | Where-Object { [int]$_.RemotePort -eq 0 })
+        if ($noRemote.Count -gt 0) {
+            $stateNames = @(
+                $noRemote | ForEach-Object {
+                    $name = [string]$_.State
+                    if ([string]::IsNullOrEmpty($name)) { 'unnamed' } else { $name }
+                } | Sort-Object -Unique
+            )
+            $listenerError = 'TCP table inconsistent: no Listen row on the port, but ' +
+                [string]$noRemote.Count + ' row(s) without a remote endpoint (state ' +
+                ($stateNames -join ',') + ')'
+        }
+    }
     $ownerPids = @($listeners | Select-Object -ExpandProperty OwningProcess | Sort-Object -Unique)
     $ownerLineages = @(
         foreach ($ownerPid in $ownerPids) {

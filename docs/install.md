@@ -37,7 +37,8 @@ If `DIR` is not on your `PATH`, the installer says so; add it to your shell prof
 1. It maps `uname` to a release target, or stops with a clear error on an unsupported machine.
 2. It checks the archive against `sha256.sum` with `shasum` or `sha256sum`. If neither exists it stops: it never installs unchecked.
 3. With `--verify-attestation` it runs `gh attestation verify` on the archive for this repository and stops if `gh` is missing or the check fails; this needs network access to GitHub and a logged-in `gh` (`gh auth status`). Without the flag it never runs `gh` and prints one line saying the attestation was not checked.
-4. It installs `rdbg` with mode 0755 and runs `rdbg --version`.
+4. It unpacks the archive and stops if the `rdbg` binary, or the `rdbg-<target>` directory holding it, is a symbolic link (earlier versions checked only the binary itself).
+5. It installs `rdbg` with mode 0755 and runs `rdbg --version`.
 
 A failed check installs nothing, and the installer removes its temporary files when it ends.
 

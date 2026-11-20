@@ -191,7 +191,11 @@ main() {
   unpacked="$work/unpacked"
   mkdir "$unpacked" || die "cannot create $unpacked"
   (cd "$unpacked" && gzip -dc "$work/$archive" | tar -xf -) || die "cannot unpack $archive"
-  bin="$unpacked/${archive%.tar.gz}/$APP"
+  # Every path component below $unpacked must be a real directory or file: a
+  # symlinked directory would make the checks below pass for a file outside it.
+  top="$unpacked/${archive%.tar.gz}"
+  if [ -L "$top" ]; then die "$archive: ${archive%.tar.gz} is a symbolic link; nothing was installed"; fi
+  bin="$top/$APP"
   if [ ! -f "$bin" ]; then bin="$unpacked/$APP"; fi
   if [ ! -f "$bin" ] || [ -L "$bin" ]; then die "$archive has no regular file named $APP"; fi
 

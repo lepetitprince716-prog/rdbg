@@ -334,6 +334,49 @@ bad_args "unknown option" --frobnicate
 check "bad arguments: nothing was requested" test ! -s "$tmp/curl-ok.log"
 check "bad arguments: nothing was installed" test ! -e "$tmp/t13"
 
+lnbin=$(command -v ln) || setup_die "ln not found"
+
+# --- 9. archives whose binary path goes through a symlink --------------------
+
+mkdir "$tmp/outside"
+cat >"$tmp/outside/rdbg" <<'EOF'
+#!/bin/sh
+echo "rdbg 0.0.0-outside"
+EOF
+chmod 0755 "$tmp/outside/rdbg"
+
+link_release() { # NAME dir|bin: rdbg-<target>, or rdbg inside it, links to $tmp/outside
+  lr_rel=$tmp/$1
+  lr_stage=$tmp/stage-$1
+  mkdir "$lr_rel" "$lr_stage"
+  for t in aarch64-apple-darwin x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+    if [ "$2" = dir ]; then
+      "$lnbin" -s "$tmp/outside" "$lr_stage/rdbg-$t"
+    else
+      mkdir "$lr_stage/rdbg-$t"
+      "$lnbin" -s "$tmp/outside/rdbg" "$lr_stage/rdbg-$t/rdbg"
+    fi
+    (cd "$lr_stage" && tar -cf - "rdbg-$t" | gzip -n) >"$lr_rel/rdbg-$t.tar.gz"
+  done
+  (
+    cd "$lr_rel"
+    for f in rdbg-*.tar.gz; do printf '%s *%s\n' "$(sum256 "$f")" "$f"; done
+  ) >"$lr_rel/sha256.sum"
+}
+
+link_release release-symdir dir
+run_install "$tmp/box-sum" --from "$tmp/release-symdir" --to "$tmp/t16/bin"
+check "symlinked archive directory: exit nonzero" test "$rc" -ne 0
+check "symlinked archive directory: says why" grep -q "symbolic link" "$tmp/out"
+check "symlinked archive directory: nothing installed" test ! -e "$tmp/t16"
+check "symlinked archive directory: no temp files left" no_leftovers
+
+link_release release-symbin bin
+run_install "$tmp/box-sum" --from "$tmp/release-symbin" --to "$tmp/t17/bin"
+check "symlinked binary in the archive: exit nonzero" test "$rc" -ne 0
+check "symlinked binary in the archive: nothing installed" test ! -e "$tmp/t17"
+check "symlinked binary in the archive: no temp files left" no_leftovers
+
 # --- result ----------------------------------------------------------------
 
 if [ "$fails" -ne 0 ]; then

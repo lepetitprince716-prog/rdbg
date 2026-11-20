@@ -334,7 +334,32 @@ bad_args "unknown option" --frobnicate
 check "bad arguments: nothing was requested" test ! -s "$tmp/curl-ok.log"
 check "bad arguments: nothing was installed" test ! -e "$tmp/t13"
 
+# --- 8. a planted symlink at the old staging name ---------------------------
+# Another local user who can write to the install directory plants a symlink
+# at the name install.sh once staged the binary under (.rdbg.new.<pid>). exec
+# keeps the pid, so the link sits exactly at that name when install.sh starts.
+
 lnbin=$(command -v ln) || setup_die "ln not found"
+mkdir -p "$tmp/t15/bin"
+printf 'victim\n' >"$tmp/victim"
+chmod 0600 "$tmp/victim"
+cat >"$tmp/plant.sh" <<'EOF'
+# INTERP LN LINK-TARGET DEST INSTALLER RELEASE
+"$2" -s "$3" "$4/.rdbg.new.$$" && exec "$1" "$5" --from "$6" --to "$4"
+EOF
+rc=0
+env -i PATH="$tmp/box-sum" HOME="$tmp/home" TMPDIR="$tmp/tmpdir" \
+  "$interp" "$tmp/plant.sh" "$interp" "$lnbin" "$tmp/victim" "$tmp/t15/bin" "$installer" "$rel" \
+  >"$tmp/out" 2>&1 || rc=$?
+check "planted staging symlink: exit 0" test "$rc" -eq 0
+check "planted staging symlink: rdbg installed" test -x "$tmp/t15/bin/rdbg"
+check "planted staging symlink: rdbg is a regular file, not the planted link" \
+  test ! -L "$tmp/t15/bin/rdbg"
+check "planted staging symlink: the link target keeps its content" \
+  test "$(cat "$tmp/victim")" = "victim"
+check "planted staging symlink: the link target keeps mode 0600" \
+  test -n "$(find "$tmp/victim" -type f -perm 600)"
+check "planted staging symlink: no temp files left" no_leftovers
 
 # --- 9. archives whose binary path goes through a symlink --------------------
 

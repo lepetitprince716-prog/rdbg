@@ -200,7 +200,9 @@ main() {
   if [ ! -f "$bin" ] || [ -L "$bin" ]; then die "$archive has no regular file named $APP"; fi
 
   mkdir -p "$dest" || die "cannot create $dest"
-  staged="$dest/.$APP.new.$$"
+  # mktemp creates a new file under an unpredictable name, so nothing another
+  # user planted in $dest (a symlink, say) is written through.
+  staged=$(mktemp "$dest/.$APP.new.XXXXXX") || die "cannot write to $dest"
   cp "$bin" "$staged" || die "cannot write to $dest"
   chmod 0755 "$staged" || die "cannot set the mode of $staged"
   version_line=$("$staged" --version 2>&1 </dev/null) ||

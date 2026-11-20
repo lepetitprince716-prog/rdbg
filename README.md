@@ -75,6 +75,8 @@ Hosts live in `hosts.toml`, found through `--config PATH`, then `$RDBG_CONFIG`, 
 Each `[hosts.ALIAS]` table takes `ssh` (an ssh_config alias, required), `ssh_bin` (default
 `ssh`) and `no_ssh_opts` (default `false`). An optional `[hosts.ALIAS.comfy]` table takes `port`
 (default 8188), `expected_service`, `expected_version` and `python`. Unknown keys are rejected.
+`expected_service` must be 1-64 characters of `A-Za-z0-9._-` for every command; earlier versions
+checked this only for `rdbg comfy`, so a `doctor`-only config with another name now fails to load.
 These values are prepended to the probe as `$ComfyPort`, `$ExpectedService`,
 `$ExpectedComfyVersion` and `$CanonicalPython`, single-quoted, or `$null` when absent.
 
@@ -149,8 +151,8 @@ outcome `done`. One remote operation runs per alias at a time, on the same lock 
 
 The `[hosts.ALIAS.comfy]` table takes, besides the doctor keys: `root` (the directory holding
 `main.py`), `listen` (default `127.0.0.1`) and `args` (extra ComfyUI arguments; each non-empty,
-without `"` or control characters). `expected_service` names the Windows service and must be 1-64
-characters of `A-Za-z0-9._-` for `rdbg comfy`. A key an action needs but lacks is a `config` error
+without `"` or control characters). `expected_service` names the Windows service (1-64 characters
+of `A-Za-z0-9._-`, as above). A key an action needs but lacks is a `config` error
 before `ssh` starts.
 
 `restart` refuses, changing nothing, when the session is not an administrator, when the service

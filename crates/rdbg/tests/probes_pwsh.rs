@@ -525,7 +525,8 @@ fn every_composed_probe_parses() {
         compose(
             &scratch,
             probe,
-            "expected_service = \"Svc's\"\npython = 'C:\\a b\\python.exe'\n",
+            "expected_service = \"Svc\"\nexpected_version = \"1.0'rc\"\n\
+             python = 'C:\\a b\\python.exe'\n",
         );
         let path = scratch.0.join(format!("{probe}.composed.ps1"));
         let command = format!(

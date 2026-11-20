@@ -908,8 +908,8 @@ fn terminate_and_reap(
 pub(crate) fn process_result_document(result: &ProcessResult) -> (Value, i32) {
     let (class, rdbg_exit_code, message) = classify_process_result(result);
     let ok = rdbg_exit_code == EXIT_OK;
-    let (stdout, stdout_lossy) = utf8_output(&result.stdout);
-    let (stderr, stderr_lossy) = utf8_output(&result.stderr);
+    let (stdout, stdout_lossy) = utf8_output(&result.stdout, result.stdout_truncated);
+    let (stderr, stderr_lossy) = utf8_output(&result.stderr, result.stderr_truncated);
     let document = json!({
         "schema": "rdbg.result.v1",
         "ok": ok,
@@ -1121,15 +1121,38 @@ fn write_human_diagnostic(class: &str, message: &str, existing_stderr: &[u8]) {
     let _ = writeln!(stderr, "rdbg [{class}]: {message}");
 }
 
-fn utf8_output(bytes: &[u8]) -> (String, bool) {
-    match String::from_utf8(bytes.to_vec()) {
-        Ok(text) => (text, false),
-        Err(error) => (String::from_utf8_lossy(error.as_bytes()).into_owned(), true),
+/// Decode captured output; the flag is true when invalid bytes were replaced. The
+/// byte limit of a truncated stream can split the last character: that incomplete
+/// tail is dropped, since the stream is already reported as truncated.
+fn utf8_output(bytes: &[u8], truncated: bool) -> (String, bool) {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => (text.to_owned(), false),
+        Err(error) if truncated && error.error_len().is_none() => {
+            let valid = &bytes[..error.valid_up_to()];
+            (String::from_utf8_lossy(valid).into_owned(), false)
+        }
+        Err(_) => (String::from_utf8_lossy(bytes).into_owned(), true),
     }
 }
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn truncated_output_drops_only_an_incomplete_last_character() {
+        let cut = &"a\u{4e2d}".as_bytes()[..2];
+        assert_eq!(utf8_output(cut, true), ("a".to_owned(), false));
+        assert_eq!(utf8_output(cut, false), ("a\u{fffd}".to_owned(), true));
+        assert_eq!(
+            utf8_output(b"a\xffb", true),
+            ("a\u{fffd}b".to_owned(), true)
+        );
+        assert!(utf8_output(b"a\xff\xe4", true).1);
+        assert_eq!(
+            utf8_output("\u{4e2d}".as_bytes(), true),
+            ("\u{4e2d}".to_owned(), false)
+        );
+    }
     use super::*;
 
     #[test]

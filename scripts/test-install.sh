@@ -334,6 +334,74 @@ bad_args "unknown option" --frobnicate
 check "bad arguments: nothing was requested" test ! -s "$tmp/curl-ok.log"
 check "bad arguments: nothing was installed" test ! -e "$tmp/t13"
 
+# --- 8. a planted symlink at the old staging name ---------------------------
+# Another local user who can write to the install directory plants a symlink
+# at the name install.sh once staged the binary under (.rdbg.new.<pid>). exec
+# keeps the pid, so the link sits exactly at that name when install.sh starts.
+
+lnbin=$(command -v ln) || setup_die "ln not found"
+mkdir -p "$tmp/t15/bin"
+printf 'victim\n' >"$tmp/victim"
+chmod 0600 "$tmp/victim"
+cat >"$tmp/plant.sh" <<'EOF'
+# INTERP LN LINK-TARGET DEST INSTALLER RELEASE
+"$2" -s "$3" "$4/.rdbg.new.$$" && exec "$1" "$5" --from "$6" --to "$4"
+EOF
+rc=0
+env -i PATH="$tmp/box-sum" HOME="$tmp/home" TMPDIR="$tmp/tmpdir" \
+  "$interp" "$tmp/plant.sh" "$interp" "$lnbin" "$tmp/victim" "$tmp/t15/bin" "$installer" "$rel" \
+  >"$tmp/out" 2>&1 || rc=$?
+check "planted staging symlink: exit 0" test "$rc" -eq 0
+check "planted staging symlink: rdbg installed" test -x "$tmp/t15/bin/rdbg"
+check "planted staging symlink: rdbg is a regular file, not the planted link" \
+  test ! -L "$tmp/t15/bin/rdbg"
+check "planted staging symlink: the link target keeps its content" \
+  test "$(cat "$tmp/victim")" = "victim"
+check "planted staging symlink: the link target keeps mode 0600" \
+  test -n "$(find "$tmp/victim" -type f -perm 600)"
+check "planted staging symlink: no temp files left" no_leftovers
+
+# --- 9. archives whose binary path goes through a symlink --------------------
+
+mkdir "$tmp/outside"
+cat >"$tmp/outside/rdbg" <<'EOF'
+#!/bin/sh
+echo "rdbg 0.0.0-outside"
+EOF
+chmod 0755 "$tmp/outside/rdbg"
+
+link_release() { # NAME dir|bin: rdbg-<target>, or rdbg inside it, links to $tmp/outside
+  lr_rel=$tmp/$1
+  lr_stage=$tmp/stage-$1
+  mkdir "$lr_rel" "$lr_stage"
+  for t in aarch64-apple-darwin x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+    if [ "$2" = dir ]; then
+      "$lnbin" -s "$tmp/outside" "$lr_stage/rdbg-$t"
+    else
+      mkdir "$lr_stage/rdbg-$t"
+      "$lnbin" -s "$tmp/outside/rdbg" "$lr_stage/rdbg-$t/rdbg"
+    fi
+    (cd "$lr_stage" && tar -cf - "rdbg-$t" | gzip -n) >"$lr_rel/rdbg-$t.tar.gz"
+  done
+  (
+    cd "$lr_rel"
+    for f in rdbg-*.tar.gz; do printf '%s *%s\n' "$(sum256 "$f")" "$f"; done
+  ) >"$lr_rel/sha256.sum"
+}
+
+link_release release-symdir dir
+run_install "$tmp/box-sum" --from "$tmp/release-symdir" --to "$tmp/t16/bin"
+check "symlinked archive directory: exit nonzero" test "$rc" -ne 0
+check "symlinked archive directory: says why" grep -q "symbolic link" "$tmp/out"
+check "symlinked archive directory: nothing installed" test ! -e "$tmp/t16"
+check "symlinked archive directory: no temp files left" no_leftovers
+
+link_release release-symbin bin
+run_install "$tmp/box-sum" --from "$tmp/release-symbin" --to "$tmp/t17/bin"
+check "symlinked binary in the archive: exit nonzero" test "$rc" -ne 0
+check "symlinked binary in the archive: nothing installed" test ! -e "$tmp/t17"
+check "symlinked binary in the archive: no temp files left" no_leftovers
+
 # --- result ----------------------------------------------------------------
 
 if [ "$fails" -ne 0 ]; then

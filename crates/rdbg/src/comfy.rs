@@ -148,14 +148,6 @@ fn compose_script(host: &HostEntry, action: ActionId, install: &InstallOptions) 
 /// The per-action configuration checks that run before any ssh process starts.
 fn check_config(alias: &str, host: &HostEntry, action: ActionId) -> Result<(), String> {
     let key = |name: &str| format!("hosts.{alias}.comfy.{name}");
-    if let Some(service) = &host.comfy.expected_service
-        && !hosts::is_valid_service_name(service)
-    {
-        return Err(format!(
-            "{} must be 1-64 characters of A-Z a-z 0-9 . _ - for rdbg comfy",
-            key("expected_service")
-        ));
-    }
     let needs_service = action != ActionId::Status;
     if needs_service && host.comfy.expected_service.is_none() {
         return Err(format!(
@@ -656,10 +648,10 @@ mod tests {
         let no_python = host("expected_service = \"Svc\"\nroot = 'C:\\ComfyUI'\n");
         let error = check_config("box-a", &no_python, ActionId::InstallService).unwrap_err();
         assert!(error.contains("comfy.python"), "{error}");
-        let bad_name = host("expected_service = \"Svc's\"\n");
-        for action in ActionId::ALL {
-            assert!(check_config("box-a", &bad_name, action).is_err());
-        }
+        // A bad service name never reaches check_config: hosts::parse refuses it.
+        let bad_name =
+            "[hosts.box-a]\nssh = \"box-a\"\n[hosts.box-a.comfy]\nexpected_service = \"Svc's\"\n";
+        assert!(hosts::parse(bad_name).is_err());
         let bad_listen = host(
             "expected_service = \"Svc\"\nroot = 'C:\\ComfyUI'\npython = 'C:\\p.exe'\nlisten = \"a b\"\n",
         );

@@ -22,9 +22,27 @@ pub const EXIT_ACTION_FAILED: i32 = 38;
 pub const MAX_OUTPUT_CHARS: usize = 32_000;
 pub(crate) const TRUNCATION_MARKER: &str = "\n...[truncated]";
 
-/// Quote a configured constant as a PowerShell single-quoted string.
+/// Characters PowerShell's tokenizer reads as a single quote: `'` and U+2018, U+2019,
+/// U+201A, U+201B (`CharExtensions.IsSingleQuote` in PowerShell's
+/// `engine/parser/CharTraits.cs`). Any of them ends a single-quoted literal.
+fn is_ps_single_quote(ch: char) -> bool {
+    matches!(ch, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}')
+}
+
+/// Quote a value as a PowerShell single-quoted string. This is the only place rdbg
+/// quotes text for a remote script: inside the literal every single-quote character
+/// is doubled, which PowerShell reads back as that one character.
 pub(crate) fn ps_single_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('\'');
+    for ch in value.chars() {
+        if is_ps_single_quote(ch) {
+            quoted.push(ch);
+        }
+        quoted.push(ch);
+    }
+    quoted.push('\'');
+    quoted
 }
 
 pub(crate) fn ps_literal(value: Option<&str>) -> String {
@@ -413,4 +431,28 @@ pub(crate) fn read_text(path: &PathBuf) -> Result<String, LocalFailure> {
                 format!("failed to read '{}': {error}", path.display()),
             )
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_quote_doubles_every_powershell_single_quote() {
+        assert_eq!(ps_single_quote(""), "''");
+        assert_eq!(ps_single_quote("O'Reilly"), "'O''Reilly'");
+        for quote in ['\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'] {
+            assert_eq!(
+                ps_single_quote(&format!("a{quote}b")),
+                format!("'a{quote}{quote}b'"),
+                "U+{:04X}",
+                u32::from(quote)
+            );
+        }
+        // Other quotation marks and non-BMP text pass through unchanged.
+        assert_eq!(
+            ps_single_quote("\u{201C}x\u{201D}\u{1F600}"),
+            "'\u{201C}x\u{201D}\u{1F600}'"
+        );
+    }
 }

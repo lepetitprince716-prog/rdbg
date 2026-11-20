@@ -51,6 +51,7 @@ printf '%s' "${RDBG_FAKE_STDERR-}" >&2
 if [ -n "${RDBG_FAKE_STDOUT_BYTES-}" ]; then
     dd if=/dev/zero bs="$RDBG_FAKE_STDOUT_BYTES" count=1 2>/dev/null | tr '\000' x
 fi
+printf '%s' "${RDBG_FAKE_STDOUT_TAIL-}"
 exit "${RDBG_FAKE_EXIT-0}"
 "#,
         )
@@ -99,6 +100,7 @@ exit "${RDBG_FAKE_EXIT-0}"
             .env_remove("RDBG_FAKE_STDOUT")
             .env_remove("RDBG_FAKE_STDERR")
             .env_remove("RDBG_FAKE_STDOUT_BYTES")
+            .env_remove("RDBG_FAKE_STDOUT_TAIL")
             .env_remove("RDBG_FAKE_EXIT")
             .stdin(Stdio::null());
         command
@@ -350,6 +352,40 @@ fn malformed_config_is_a_config_error_and_never_launches_ssh() {
 }
 
 #[test]
+fn expected_service_outside_the_service_name_set_is_a_config_error() {
+    // listener.ps1 puts the name inside a WQL filter (`Name='...'`) and overview.ps1
+    // passes it to `Get-Service -Name`, which expands wildcards.
+    let fixture = Fixture::new();
+    for name in ["x' OR State='Running", "Svc's", "*", "Comfy UI", "", "Ünï"] {
+        fixture.write_default_config(&format!(
+            "[hosts.box-a.comfy]\nexpected_service = {}\n",
+            serde_json::to_string(name).unwrap()
+        ));
+        for probe in ["listener", "overview"] {
+            let output = fixture.command().args(["box-a", probe]).output().unwrap();
+            let result = assert_doctor_failure(&output, rdbg::EXIT_CONFIG, "config");
+            assert!(
+                result["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("hosts.box-a.comfy.expected_service"),
+                "{name:?}: {result}"
+            );
+            let script = fixture.root.join("never.ps1");
+            let output = fixture
+                .command()
+                .args(["box-a", probe, "--emit-script"])
+                .arg(&script)
+                .output()
+                .unwrap();
+            assert_doctor_failure(&output, rdbg::EXIT_CONFIG, "config");
+            assert!(!script.exists(), "{name:?}");
+        }
+        assert!(!fixture.ssh_was_launched(), "{name:?}");
+    }
+}
+
+#[test]
 fn unknown_alias_and_probe_have_fixed_classes() {
     let fixture = Fixture::new();
     fixture.write_default_config("");
@@ -399,8 +435,8 @@ fn bad_arguments_are_usage_errors() {
 fn emit_script_writes_quoted_constants_and_the_probe_body() {
     let fixture = Fixture::new();
     fixture.write_default_config(
-        "[hosts.box-a.comfy]\nport = 9188\nexpected_service = \"Svc's\"\n\
-         python = 'C:\\canonical dir\\python.exe'\n",
+        "[hosts.box-a.comfy]\nport = 9188\nexpected_service = \"Svc\"\n\
+         expected_version = \"1.0'rc\"\npython = 'C:\\canonical dir\\python.exe'\n",
     );
     let script_path = fixture.root.join("listener script.ps1");
     let output = fixture
@@ -414,7 +450,7 @@ fn emit_script_writes_quoted_constants_and_the_probe_body() {
     assert!(output.stdout.is_empty() && output.stderr.is_empty());
     assert!(!fixture.ssh_was_launched());
     let expected = format!(
-        "$ComfyPort = 9188\n$ExpectedService = 'Svc''s'\n$ExpectedComfyVersion = $null\n\
+        "$ComfyPort = 9188\n$ExpectedService = 'Svc'\n$ExpectedComfyVersion = '1.0''rc'\n\
          $CanonicalPython = 'C:\\canonical dir\\python.exe'\n{}",
         probe_body("listener")
     );
@@ -577,6 +613,30 @@ fn runner_truncation_of_an_ok_run_is_probe_protocol() {
     assert_eq!(
         stdout.chars().count(),
         rdbg::MAX_OUTPUT_CHARS + TRUNCATION_MARKER.chars().count()
+    );
+}
+
+#[test]
+fn truncation_inside_a_multibyte_character_is_still_probe_protocol() {
+    // The 1 MiB capture limit falls on the second byte of a three-byte character.
+    let fixture = Fixture::new();
+    fixture.write_default_config("");
+    let output = fixture
+        .command()
+        .env("RDBG_FAKE_STDOUT_BYTES", (1024 * 1024 - 1).to_string())
+        .env("RDBG_FAKE_STDOUT_TAIL", "\u{4e2d}\u{4e2d}")
+        .args(["box-a", "transport"])
+        .output()
+        .unwrap();
+
+    let result = assert_doctor_failure(&output, rdbg::EXIT_PROBE_PROTOCOL, "probe_protocol");
+    assert_eq!(result["message"], "remote probe output was truncated");
+    assert_eq!(result["stdout_truncated"], true);
+    let stdout = result["stdout"].as_str().unwrap();
+    assert!(
+        !stdout.contains('\u{fffd}'),
+        "{}",
+        &stdout[stdout.len() - 40..]
     );
 }
 

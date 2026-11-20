@@ -350,6 +350,40 @@ fn malformed_config_is_a_config_error_and_never_launches_ssh() {
 }
 
 #[test]
+fn expected_service_outside_the_service_name_set_is_a_config_error() {
+    // listener.ps1 puts the name inside a WQL filter (`Name='...'`) and overview.ps1
+    // passes it to `Get-Service -Name`, which expands wildcards.
+    let fixture = Fixture::new();
+    for name in ["x' OR State='Running", "Svc's", "*", "Comfy UI", "", "Ünï"] {
+        fixture.write_default_config(&format!(
+            "[hosts.box-a.comfy]\nexpected_service = {}\n",
+            serde_json::to_string(name).unwrap()
+        ));
+        for probe in ["listener", "overview"] {
+            let output = fixture.command().args(["box-a", probe]).output().unwrap();
+            let result = assert_doctor_failure(&output, rdbg::EXIT_CONFIG, "config");
+            assert!(
+                result["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("hosts.box-a.comfy.expected_service"),
+                "{name:?}: {result}"
+            );
+            let script = fixture.root.join("never.ps1");
+            let output = fixture
+                .command()
+                .args(["box-a", probe, "--emit-script"])
+                .arg(&script)
+                .output()
+                .unwrap();
+            assert_doctor_failure(&output, rdbg::EXIT_CONFIG, "config");
+            assert!(!script.exists(), "{name:?}");
+        }
+        assert!(!fixture.ssh_was_launched(), "{name:?}");
+    }
+}
+
+#[test]
 fn unknown_alias_and_probe_have_fixed_classes() {
     let fixture = Fixture::new();
     fixture.write_default_config("");
@@ -399,8 +433,8 @@ fn bad_arguments_are_usage_errors() {
 fn emit_script_writes_quoted_constants_and_the_probe_body() {
     let fixture = Fixture::new();
     fixture.write_default_config(
-        "[hosts.box-a.comfy]\nport = 9188\nexpected_service = \"Svc's\"\n\
-         python = 'C:\\canonical dir\\python.exe'\n",
+        "[hosts.box-a.comfy]\nport = 9188\nexpected_service = \"Svc\"\n\
+         expected_version = \"1.0'rc\"\npython = 'C:\\canonical dir\\python.exe'\n",
     );
     let script_path = fixture.root.join("listener script.ps1");
     let output = fixture
@@ -414,7 +448,7 @@ fn emit_script_writes_quoted_constants_and_the_probe_body() {
     assert!(output.stdout.is_empty() && output.stderr.is_empty());
     assert!(!fixture.ssh_was_launched());
     let expected = format!(
-        "$ComfyPort = 9188\n$ExpectedService = 'Svc''s'\n$ExpectedComfyVersion = $null\n\
+        "$ComfyPort = 9188\n$ExpectedService = 'Svc'\n$ExpectedComfyVersion = '1.0''rc'\n\
          $CanonicalPython = 'C:\\canonical dir\\python.exe'\n{}",
         probe_body("listener")
     );

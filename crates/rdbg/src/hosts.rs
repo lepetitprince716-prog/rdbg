@@ -131,7 +131,7 @@ pub(crate) fn is_command_line_safe(value: &str) -> bool {
 }
 
 /// A Windows service name `rdbg comfy` may address: 1-64 of `A-Za-z0-9._-`.
-pub(crate) fn is_valid_service_name(value: &str) -> bool {
+fn is_valid_service_name(value: &str) -> bool {
     (1..=64).contains(&value.len())
         && value
             .chars()
@@ -213,6 +213,15 @@ pub(crate) fn parse(text: &str) -> Result<Hosts, String> {
         }
         if entry.comfy.port == 0 {
             return Err(format!("hosts.{alias}.comfy.port must be 1-65535"));
+        }
+        // The probes and actions put this name inside a WQL filter and pass it to
+        // Get-Service, which expands wildcards; only a plain service name is safe in both.
+        if let Some(service) = &entry.comfy.expected_service
+            && !is_valid_service_name(service)
+        {
+            return Err(format!(
+                "hosts.{alias}.comfy.expected_service must be 1-64 characters of A-Z a-z 0-9 . _ -"
+            ));
         }
         if let Some(index) = entry
             .comfy
@@ -337,6 +346,8 @@ mod tests {
             "[hosts.box-a]\nssh = \"a\"\n[hosts.box-a.comfy]\nargs = [\"--x=\\\"y\\\"\"]\n",
             "[hosts.box-a]\nssh = \"a\"\n[hosts.box-a.comfy]\nargs = [\"a\\nb\"]\n",
             "[hosts.box-a]\nssh = \"a\"\n[hosts.box-a.comfy]\nargs = \"--x\"\n",
+            "[hosts.box-a]\nssh = \"a\"\n[hosts.box-a.comfy]\nexpected_service = \"Svc's\"\n",
+            "[hosts.box-a]\nssh = \"a\"\n[hosts.box-a.comfy]\nexpected_service = \"*\"\n",
         ] {
             assert!(parse(text).is_err(), "accepted: {text}");
         }
